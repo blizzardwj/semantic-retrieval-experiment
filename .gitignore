@@ -79,3 +79,9 @@ data/external/
 # Logs
 logs/
 *.log
+
+# Python version file
+.python-version
+
+# Lock files
+*.lock

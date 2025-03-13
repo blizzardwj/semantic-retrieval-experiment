@@ -1,71 +1,73 @@
 """
-Implementation for BGE embedding models.
+Implementation for BGE embedding models using LangChain and Xinference.
 """
 from semantic_retrieval.embedding.base import EmbeddingModel
+import numpy as np
 
 class BGEEmbedding(EmbeddingModel):
-    """Implementation for BGE embedding models."""
+    """Implementation for BGE embedding models using LangChain and Xinference."""
     
     def __init__(self, model_name):
         """Initialize with model name.
         
         Args:
             model_name (str): Name of the BGE model to use (e.g., "bge_large_zh-v1.5" or "bge-m3")
+                              This should match the model name in Xinference
         """
         self.model_name = model_name
-        self.model = None
-        self.tokenizer = None
+        self.embedding_model = None
+        self.server_url = None
+        self.model_uid = None
     
-    def initialize(self):
-        """Initialize and load BGE model."""
-        from transformers import AutoModel, AutoTokenizer
-        import torch
+    def initialize(self, server_url="http://localhost:9997", model_uid=None):
+        """Initialize and connect to Xinference embedding model.
         
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        self.model = AutoModel.from_pretrained(self.model_name)
-        if torch.cuda.is_available():
-            self.model = self.model.to('cuda')
+        Args:
+            server_url (str): URL of the Xinference server
+            model_uid (str): UID of the launched model in Xinference.
+                             If None, you'll need to launch the model manually
+                             and provide the UID later.
+        """
+        from langchain_community.embeddings import XinferenceEmbeddings
+        
+        self.server_url = server_url
+        self.model_uid = model_uid
+        
+        if model_uid:
+            self.embedding_model = XinferenceEmbeddings(
+                server_url=server_url,
+                model_uid=model_uid
+            )
     
     def embed(self, text):
-        """Embed a single text using BGE."""
-        import torch
+        """Embed a single text using BGE via Xinference.
         
-        if self.model is None or self.tokenizer is None:
-            self.initialize()
+        Args:
+            text (str): Text to embed
             
-        inputs = self.tokenizer(text, return_tensors='pt', padding=True, truncation=True, max_length=512)
-        if torch.cuda.is_available():
-            inputs = {k: v.to('cuda') for k, v in inputs.items()}
+        Returns:
+            numpy.ndarray: Embedding vector
+        """
+        if self.embedding_model is None:
+            raise ValueError("Model not initialized. Call initialize() with server_url and model_uid first.")
             
-        with torch.no_grad():
-            outputs = self.model(**inputs)
-            
-        # Use CLS token embedding as sentence embedding
-        embedding = outputs.last_hidden_state[:, 0, :].cpu().numpy()
-        return embedding[0]
+        embedding = self.embedding_model.embed_query(text)
+        return np.array(embedding)
     
     def embed_batch(self, texts, batch_size=32):
-        """Embed a batch of texts using BGE."""
-        import numpy as np
-        import torch
-        from tqdm import tqdm
+        """Embed a batch of texts using BGE via Xinference.
         
-        if self.model is None or self.tokenizer is None:
-            self.initialize()
+        Args:
+            texts (List[str]): List of texts to embed
+            batch_size (int): Batch size for processing (handled by Xinference internally)
             
-        all_embeddings = []
-        for i in tqdm(range(0, len(texts), batch_size)):
-            batch_texts = texts[i:i+batch_size]
-            inputs = self.tokenizer(batch_texts, return_tensors='pt', padding=True, truncation=True, max_length=512)
-            
-            if torch.cuda.is_available():
-                inputs = {k: v.to('cuda') for k, v in inputs.items()}
-                
-            with torch.no_grad():
-                outputs = self.model(**inputs)
-                
-            # Use CLS token embedding as sentence embedding
-            batch_embeddings = outputs.last_hidden_state[:, 0, :].cpu().numpy()
-            all_embeddings.append(batch_embeddings)
-            
-        return np.vstack(all_embeddings)
+        Returns:
+            numpy.ndarray: Matrix of embedding vectors
+        """
+        if self.embedding_model is None:
+            raise ValueError("Model not initialized. Call initialize() with server_url and model_uid first.")
+        
+        # XinferenceEmbeddings handles batching internally
+        embeddings = self.embedding_model.embed_documents(texts)
+        return np.array(embeddings)
+

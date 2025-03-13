@@ -37,3 +37,4 @@ class FastTextEmbedding(EmbeddingModel):
         if self.model is None:
             self.initialize()
         return np.array([self.embed(text) for text in texts])
+
