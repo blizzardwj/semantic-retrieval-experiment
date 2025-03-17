@@ -11,27 +11,50 @@ from semantic_retrieval.retrieval.base import InitialRetrievalStrategy, DirectCo
 class LLMRerankedBGEApproach(RetrievalApproach):
     """Implementation of Approach 3: BGE embedding with LLM reranking."""
     
-    def __init__(self, model_name: str = "BAAI/bge-large-zh-v1.5", persist_directory: Optional[str] = None, 
-                 use_vector_store: bool = False):
+    def __init__(self, 
+        embedding_model: str = "bge-large-zh-v1.5",
+        embedding_server_url: str = "http://20.30.80.200:9997",
+        llm_model: str = "deepseek-r1-distill-qwen", 
+        llm_server_url: str = "http://20.30.80.200:9997",
+        persist_directory: Optional[str] = None, 
+        use_vector_store: bool = False
+    ):
         """Initialize LLM-reranked BGE approach.
         
         Args:
-            model_name (str): Name of the BGE model to use
+            embedding_model (str): Name of the BGE model to use
+            embedding_server_url (str): URL of the BGE model server
+            llm_model (str): Name of the LLM model to use
+            llm_server_url (str): URL of the LLM model server
             persist_directory (str, optional): Directory to persist vector store. If None, 
-                                              an in-memory vector store will be used.
+                an in-memory vector store will be used.
             use_vector_store (bool): Whether to use vector store for initial retrieval
         """
         super().__init__("LLM-Reranked BGE")
-        self.embedding_model = BGEEmbedding(model_name)
-        self.llm_model = LLMModel("gpt-3.5-turbo")  # This could be changed to a different LLM
+        self.embedding_model = BGEEmbedding(embedding_model)
+        self.llm_model = LLMModel(llm_model)  # This could be changed to a different LLM
+        self.embedding_server_url = embedding_server_url
+        self.llm_server_url = llm_server_url
         self.persist_directory = persist_directory
         self.sentence_list = None
+        self.use_vector_store = use_vector_store
         
         # Set the initial retrieval strategy based on the use_vector_store flag
+        self.retrieval_strategy = self._create_retrieval_strategy(use_vector_store)
+    
+    def _create_retrieval_strategy(self, use_vector_store: bool) -> InitialRetrievalStrategy:
+        """Helper method to create the appropriate retrieval strategy.
+        
+        Args:
+            use_vector_store (bool): Whether to use vector store
+            
+        Returns:
+            InitialRetrievalStrategy: The selected retrieval strategy
+        """
         if use_vector_store:
-            self.retrieval_strategy = VectorStoreStrategy(persist_directory)
+            return VectorStoreStrategy(self.persist_directory)
         else:
-            self.retrieval_strategy = DirectComparisonStrategy()
+            return DirectComparisonStrategy()
     
     def set_retrieval_strategy(self, strategy: InitialRetrievalStrategy) -> None:
         """Set the initial retrieval strategy.
@@ -53,15 +76,13 @@ class LLMRerankedBGEApproach(RetrievalApproach):
                                               or direct comparison strategy (False)
         """
         self.sentence_list = sentence_list
-        self.embedding_model.initialize()
-        self.llm_model.initialize()
+        self.embedding_model.initialize(server_url=self.embedding_server_url)
+        self.llm_model.initialize(server_url=self.llm_server_url)
         
-        # Switch strategy if requested
-        if use_vector_store is not None:
-            if use_vector_store:
-                self.retrieval_strategy = VectorStoreStrategy(self.persist_directory)
-            else:
-                self.retrieval_strategy = DirectComparisonStrategy()
+        # Check if we need to change the strategy
+        if use_vector_store is not None and use_vector_store != self.use_vector_store:
+            self.use_vector_store = use_vector_store
+            self.retrieval_strategy = self._create_retrieval_strategy(use_vector_store)
         
         # Initialize the strategy with the sentences
         self.retrieval_strategy.initialize(sentence_list, self.embedding_model)
@@ -88,9 +109,29 @@ class LLMRerankedBGEApproach(RetrievalApproach):
         )
         
         # Get final top_k sentences and their similarities
-        final_top_indices = [initial_top_indices[i] for i in reranked_indices[:top_k]]
-        final_top_similarities = [initial_top_similarities[i] for i in reranked_indices[:top_k]]
-        final_top_sentences = [initial_top_sentences[i] for i in reranked_indices[:top_k]]
+        # reranked_indices 已经是映射到原始语料库的索引，直接使用它
+        final_top_indices = reranked_indices[:top_k]
+        
+        # 为了获取相似度和句子，需要找到这些索引在 initial_top_indices 中的位置
+        final_top_similarities = []
+        final_top_sentences = []
+        
+        for idx in final_top_indices:
+            # 查找索引在 initial_top_indices 中的位置
+            if idx in initial_top_indices:
+                pos = initial_top_indices.index(idx)
+                final_top_similarities.append(initial_top_similarities[pos])
+                final_top_sentences.append(initial_top_sentences[pos])
+            else:
+                # 如果找不到对应的索引（可能是LLM返回了不在候选集中的索引），
+                # 则使用原始语料库中的句子（如果可用）
+                if self.sentence_list and 0 <= idx < len(self.sentence_list):
+                    final_top_sentences.append(self.sentence_list[idx])
+                    # 由于没有相似度分数，使用一个默认值（例如0）
+                    final_top_similarities.append(0.0)
+                else:
+                    # 如果索引无效，跳过这个结果
+                    continue
         
         return final_top_sentences, final_top_similarities, final_top_indices
     
@@ -112,4 +153,3 @@ class LLMRerankedBGEApproach(RetrievalApproach):
             results.append(query_result)
         
         return results
-    

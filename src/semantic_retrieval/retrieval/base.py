@@ -147,22 +147,18 @@ class VectorStoreStrategy(InitialRetrievalStrategy):
             ) for i, sentence in enumerate(sentences)
         ]
         
-        # Create a custom embedding function that uses our embedding model
-        def embedding_function(texts):
-            return embedding_model.embed_batch(texts).tolist()
-        
         # Create the Chroma vector store
         if self.persist_directory:
             os.makedirs(self.persist_directory, exist_ok=True)
             self.vector_store = Chroma.from_documents(
                 documents=documents,
-                embedding=embedding_function,
+                embedding=embedding_model,
                 persist_directory=self.persist_directory
             )
         else:
             self.vector_store = Chroma.from_documents(
                 documents=documents,
-                embedding=embedding_function
+                embedding=embedding_model
             )
     
     def retrieve(self, query: str, embedding_model: Any, top_k: int) -> Tuple[List[str], List[float], List[int]]:

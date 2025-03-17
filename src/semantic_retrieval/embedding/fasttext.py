@@ -23,18 +23,34 @@ class FastTextEmbedding(EmbeddingModel):
         else:
             # Download or use a default Chinese FastText model
             # This is a placeholder - actual implementation would depend on specific requirements
-            self.model = fasttext.load_model('cc.zh.300.bin')
+            # self.model = fasttext.load_model('cc.zh.300.bin')
+            raise ValueError("FastText model path is required")
     
-    def embed(self, text):
-        """Embed a single text using FastText."""
+    def embed_query(self, text: str) -> list[float]:
+        """Embed a single text using FastText.
+        
+        Args:
+            text (str): Text to embed
+            
+        Returns:
+            list[float]: The embedding vector
+        """
         if self.model is None:
             self.initialize()
-        return self.model.get_sentence_vector(text)
+        vector = self.model.get_sentence_vector(text)
+        return vector.tolist()
     
-    def embed_batch(self, texts):
-        """Embed a batch of texts using FastText."""
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        """Embed a batch of texts using FastText.
+        
+        Args:
+            texts (list[str]): List of texts to embed
+            
+        Returns:
+            list[list[float]]: Matrix of embedding vectors
+        """
         import numpy as np
         if self.model is None:
             self.initialize()
-        return np.array([self.embed(text) for text in texts])
-
+        vectors = [self.model.get_sentence_vector(text) for text in texts]
+        return [vector.tolist() for vector in vectors]

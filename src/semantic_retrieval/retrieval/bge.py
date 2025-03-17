@@ -10,8 +10,12 @@ from semantic_retrieval.retrieval.base import InitialRetrievalStrategy, DirectCo
 class BGEApproach(RetrievalApproach):
     """Implementation of Approach 2: BGE embedding."""
     
-    def __init__(self, model_name: str = "BAAI/bge-large-zh-v1.5", persist_directory: Optional[str] = None, 
-                 use_vector_store: bool = False):
+    def __init__(self, 
+        model_name: str = "bge-large-zh-v1.5", 
+        server_url: str = "http://20.30.80.200:9997",
+        persist_directory: Optional[str] = None, 
+        use_vector_store: bool = False
+    ):
         """Initialize BGE approach.
         
         Args:
@@ -22,15 +26,31 @@ class BGEApproach(RetrievalApproach):
         """
         super().__init__("BGE Embedding")
         self.embedding_model = BGEEmbedding(model_name)
+        self.server_url = server_url
         self.persist_directory = persist_directory
         self.sentence_list = None
+        self.use_vector_store = use_vector_store
         
         # Set the initial retrieval strategy based on the use_vector_store flag
         if use_vector_store:
             self.retrieval_strategy = VectorStoreStrategy(persist_directory)
         else:
             self.retrieval_strategy = DirectComparisonStrategy()
-    
+
+    def _create_retrieval_strategy(self, use_vector_store: bool) -> InitialRetrievalStrategy:
+        """Helper method to create the appropriate retrieval strategy.
+        
+        Args:
+            use_vector_store (bool): Whether to use vector store
+            
+        Returns:
+            InitialRetrievalStrategy: The selected retrieval strategy
+        """
+        if use_vector_store:
+            return VectorStoreStrategy(self.persist_directory)
+        else:
+            return DirectComparisonStrategy()
+        
     def set_retrieval_strategy(self, strategy: InitialRetrievalStrategy) -> None:
         """Set the initial retrieval strategy.
         
@@ -42,7 +62,9 @@ class BGEApproach(RetrievalApproach):
         if self.sentence_list:
             self.retrieval_strategy.initialize(self.sentence_list, self.embedding_model)
     
-    def index_sentences(self, sentence_list: List[str], use_vector_store: Optional[bool] = None) -> None:
+    def index_sentences(self, sentence_list: List[str],
+        use_vector_store: Optional[bool] = None
+    ) -> None:
         """Index sentence list using the current retrieval strategy or optionally switch strategy.
         
         Args:
@@ -51,17 +73,16 @@ class BGEApproach(RetrievalApproach):
                                               or direct comparison strategy (False)
         """
         self.sentence_list = sentence_list
-        self.embedding_model.initialize()
+        self.embedding_model.initialize(server_url=self.server_url)
         
-        # Switch strategy if requested
-        if use_vector_store is not None:
-            if use_vector_store:
-                self.retrieval_strategy = VectorStoreStrategy(self.persist_directory)
-            else:
-                self.retrieval_strategy = DirectComparisonStrategy()
+        # Check if we need to change the strategy
+        if use_vector_store is not None and use_vector_store != self.use_vector_store:
+            self.use_vector_store = use_vector_store
+            self.retrieval_strategy = self._create_retrieval_strategy(use_vector_store)
         
         # Initialize the strategy with the sentences
         self.retrieval_strategy.initialize(sentence_list, self.embedding_model)
+    
     
     def retrieve(self, query_sentence: str, top_k: int = 5) -> Tuple[List[str], List[float], List[int]]:
         """Retrieve top_k similar sentences using the current retrieval strategy.

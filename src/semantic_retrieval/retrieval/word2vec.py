@@ -19,15 +19,28 @@ class Word2VecApproach(RetrievalApproach):
             use_vector_store (bool): Whether to use vector store for initial retrieval
         """
         super().__init__("Word2Vec (FastText)")
-        self.embedding_model = FastTextEmbedding()
+        self.model_path = "/home/zfwj/workspace/new_code/fasttext_model/cc.zh.300.bin"
+        self.embedding_model = FastTextEmbedding(model_path=self.model_path)
         self.persist_directory = persist_directory
         self.sentence_list = None
+        self.use_vector_store = use_vector_store
         
         # Set the initial retrieval strategy based on the use_vector_store flag
+        self.retrieval_strategy = self._create_retrieval_strategy(use_vector_store)
+    
+    def _create_retrieval_strategy(self, use_vector_store: bool) -> InitialRetrievalStrategy:
+        """Helper method to create the appropriate retrieval strategy.
+        
+        Args:
+            use_vector_store (bool): Whether to use vector store
+            
+        Returns:
+            InitialRetrievalStrategy: The selected retrieval strategy
+        """
         if use_vector_store:
-            self.retrieval_strategy = VectorStoreStrategy(persist_directory)
+            return VectorStoreStrategy(self.persist_directory)
         else:
-            self.retrieval_strategy = DirectComparisonStrategy()
+            return DirectComparisonStrategy()
     
     def set_retrieval_strategy(self, strategy: InitialRetrievalStrategy) -> None:
         """Set the initial retrieval strategy.
@@ -46,17 +59,16 @@ class Word2VecApproach(RetrievalApproach):
         Args:
             sentence_list (list): List of sentence entries
             use_vector_store (bool, optional): If provided, switches to vector store strategy (True)
-                                              or direct comparison strategy (False)
+                                              or direct comparison strategy (False).
+                                              If None, uses the value provided in __init__.
         """
         self.sentence_list = sentence_list
         self.embedding_model.initialize()
         
-        # Switch strategy if requested
-        if use_vector_store is not None:
-            if use_vector_store:
-                self.retrieval_strategy = VectorStoreStrategy(self.persist_directory)
-            else:
-                self.retrieval_strategy = DirectComparisonStrategy()
+        # Check if we need to change the strategy
+        if use_vector_store is not None and use_vector_store != self.use_vector_store:
+            self.use_vector_store = use_vector_store
+            self.retrieval_strategy = self._create_retrieval_strategy(use_vector_store)
         
         # Initialize the strategy with the sentences
         self.retrieval_strategy.initialize(sentence_list, self.embedding_model)
