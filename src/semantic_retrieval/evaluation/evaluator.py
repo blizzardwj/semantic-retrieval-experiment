@@ -13,16 +13,18 @@ class Evaluator:
     """Evaluates retrieval results against ground truth."""
     
     def evaluate(self, 
-        retrieved_indices_list, 
-        ground_truth_labels, 
-        sentence2_indices
-    ):
-        """Evaluate retrieval results against ground truth.
+        retrieved_indices_list: List[List[int]] , 
+        ground_truth_labels: List[Any], 
+        sentence2_indices: List[int]
+    ) -> Dict[str, float]:
+        """
+        Evaluate retrieval results against ground truth.
         
         Args:
             retrieved_indices_list (list): List of lists, where each inner list contains
                                           the indices of retrieved sentences for a query
-            ground_truth_labels (list): Ground truth labels
+            ground_truth_labels (list): Ground truth labels. Can be a 1D list (same labels for all queries)
+                                       or a 2D list (different labels for each query)
             sentence2_indices (list): Indices of sentence2 entries
             
         Returns:
@@ -36,17 +38,23 @@ class Evaluator:
             "ndcg": []  # Normalized Discounted Cumulative Gain
         }
         
+        # Check if ground_truth_labels is 2D (different labels for each query)
+        is_2d_labels = isinstance(ground_truth_labels[0], list)
+        
         # For each query's retrieved results
-        for retrieved_indices in retrieved_indices_list:
+        for i, retrieved_indices in enumerate(retrieved_indices_list):
+            # Get the appropriate ground truth labels for this query
+            query_labels = ground_truth_labels[i] if is_2d_labels else ground_truth_labels
+            
             # Get ground truth labels for retrieved indices
-            retrieved_labels = [ground_truth_labels[i] for i in retrieved_indices]
+            retrieved_labels = [query_labels[idx] for idx in retrieved_indices]
             
             # Calculate metrics
             true_positives = sum(retrieved_labels)
             false_positives = len(retrieved_labels) - true_positives
             
             # Find all positive examples in the ground truth
-            positive_indices = [i for i, label in enumerate(ground_truth_labels) if label == 1]
+            positive_indices = [j for j, label in enumerate(query_labels) if label == 1]
             total_positives = len(positive_indices)
             
             # Calculate precision, recall, F1
@@ -56,9 +64,9 @@ class Evaluator:
             
             # Calculate MRR
             mrr = 0
-            for i, idx in enumerate(retrieved_indices):
-                if ground_truth_labels[idx] == 1:
-                    mrr = 1 / (i + 1)
+            for j, idx in enumerate(retrieved_indices):
+                if query_labels[idx] == 1:
+                    mrr = 1 / (j + 1)
                     break
             
             # Calculate NDCG
@@ -66,16 +74,16 @@ class Evaluator:
             idcg = 0
             
             # Calculate DCG
-            for i, idx in enumerate(retrieved_indices):
-                rel = ground_truth_labels[idx]
+            for j, idx in enumerate(retrieved_indices):
+                rel = query_labels[idx]
                 # Using binary relevance (0 or 1)
-                dcg += rel / np.log2(i + 2)  # i+2 because i is 0-indexed
+                dcg += rel / np.log2(j + 2)  # j+2 because j is 0-indexed
             
             # Calculate IDCG (ideal DCG)
             # Sort by relevance (1s first, then 0s)
-            ideal_relevance = sorted([ground_truth_labels[i] for i in retrieved_indices], reverse=True)
-            for i, rel in enumerate(ideal_relevance):
-                idcg += rel / np.log2(i + 2)
+            ideal_relevance = sorted([query_labels[idx] for idx in retrieved_indices], reverse=True)
+            for j, rel in enumerate(ideal_relevance):
+                idcg += rel / np.log2(j + 2)
             
             # Calculate NDCG
             ndcg = dcg / idcg if idcg > 0 else 0
@@ -93,7 +101,9 @@ class Evaluator:
         
         return metrics
     
-    def compare_approaches(self, results: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, float]]:
+    def compare_approaches(self, 
+        results: Dict[str, Dict[str, Any]]
+    ) -> Dict[str, Dict[str, float]]:
         """Compare evaluation results from different approaches.
         
         Args:
@@ -109,78 +119,113 @@ class Evaluator:
         return comparison
     
     def evaluate_approach(self, 
-                         approach_name: str,
-                         retriever: Any,
-                         query_sentences: List[str],
-                         sentence2_list: List[str],
-                         ground_truth_labels: List[int],
-                         top_k: int = 5,
-                         initial_top_k: Optional[int] = None) -> Dict[str, Any]:
-        """Evaluate a single retrieval approach.
+        approach_name: str,
+        retriever: Any,
+        query_sentences: List[str],
+        sentence2_list: List[str],
+        ground_truth_labels: List[Any],
+        top_k: int = 5,
+        initial_top_k: Optional[int] = None
+    ):
+        """
+        Evaluate a single retrieval approach.
         
         Args:
             approach_name (str): Name of the approach
             retriever: Retrieval approach instance
             query_sentences (list): List of query sentences
             sentence2_list (list): List of sentence2 entries
-            ground_truth_labels (list): Ground truth labels
+            ground_truth_labels (list): Ground truth labels. Can be a 1D list (same labels for all queries)
+                                       or a 2D list (different labels for each query)
             top_k (int): Number of top results to return
             initial_top_k (int, optional): Initial top_k for approaches with reranking
             
         Returns:
             dict: Evaluation results
         """
-        # Index sentences if not already indexed
+        # Initialize retriever if needed
         if hasattr(retriever, 'index_sentences') and callable(retriever.index_sentences):
             retriever.index_sentences(sentence2_list)
         
-        # Retrieve results for each query
+        # Store retrieved results
         retrieved_indices_list = []
-        retrieved_results_list = []
+        retrieved_results_list = []  # Keep this name for backward compatibility
         retrieved_similarities_list = []
         
-        for query in query_sentences:
-            if initial_top_k is not None and hasattr(retriever, 'retrieve') and callable(retriever.retrieve):
-                results, similarities, indices = retriever.retrieve(query, top_k=top_k, initial_top_k=initial_top_k)
-            else:
-                results, similarities, indices = retriever.retrieve(query, top_k=top_k)
+        # For each query
+        for query_sentence in query_sentences:
+            # Retrieve results
+            try:
+                # Try with initial_top_k if provided
+                if initial_top_k is not None:
+                    try:
+                        results, similarities, indices = retriever.retrieve(
+                            query_sentence=query_sentence,
+                            top_k=top_k,
+                            initial_top_k=initial_top_k
+                        )
+                    except TypeError:
+                        # Fallback if initial_top_k is not supported
+                        results, similarities, indices = retriever.retrieve(
+                            query_sentence=query_sentence,
+                            top_k=top_k
+                        )
+                else:
+                    # No initial_top_k
+                    results, similarities, indices = retriever.retrieve(
+                        query_sentence=query_sentence,
+                        top_k=top_k
+                    )
+            except TypeError:
+                # Try with positional arguments
+                results, similarities, indices = retriever.retrieve(
+                    query_sentence,
+                    top_k
+                )
             
+            # Store results
+            retrieved_indices_list.append(indices)
             retrieved_results_list.append(results)
             retrieved_similarities_list.append(similarities)
-            retrieved_indices_list.append(indices)
+        
+        # Create sentence2 indices
+        sentence2_indices = list(range(len(sentence2_list)))
         
         # Evaluate retrieval results
         evaluation_metrics = self.evaluate(
             retrieved_indices_list=retrieved_indices_list,
             ground_truth_labels=ground_truth_labels,
-            sentence2_indices=list(range(len(sentence2_list)))
+            sentence2_indices=sentence2_indices
         )
         
-        # Compile results
+        # Store results
         results = {
             "approach_name": approach_name,
-            "retrieved_results": retrieved_results_list,
-            "retrieved_similarities": retrieved_similarities_list,
+            "evaluation": evaluation_metrics,
             "retrieved_indices": retrieved_indices_list,
-            "evaluation": evaluation_metrics
+            "retrieved_results": retrieved_results_list,  # Keep this name for backward compatibility
+            "retrieved_similarities": retrieved_similarities_list
         }
         
         return results
     
     def evaluate_multiple_approaches(self,
-                                   retrievers: Dict[str, Any],
-                                   query_sentences: List[str],
-                                   sentence2_list: List[str],
-                                   ground_truth_labels: List[int],
-                                   top_k: int = 5,
-                                   initial_top_k: Optional[Dict[str, int]] = None) -> Dict[str, Dict[str, Any]]:
-        """Evaluate multiple retrieval approaches.
+        retrievers: Dict[str, Any],
+        query_sentences: List[str],
+        sentence2_list: List[str],
+        ground_truth_labels: List[Any],
+        top_k: int = 5,
+        initial_top_k: Optional[Dict[str, int]] = None
+    ):
+        """
+        Evaluate multiple retrieval approaches.
         
         Args:
             retrievers (dict): Dictionary of retriever instances with approach names as keys
             query_sentences (list): List of query sentences
             sentence2_list (list): List of sentence2 entries
-            ground_truth_labels (list): Ground truth labels
+            ground_truth_labels (list): Ground truth labels. Can be a 1D list (same labels for all queries)
+                                       or a 2D list (different labels for each query)
             top_k (int): Number of top results to return
             initial_top_k (dict, optional): Dictionary of initial top_k values for approaches with reranking
             
@@ -189,9 +234,14 @@ class Evaluator:
         """
         results = {}
         
+        # For each approach
         for approach_name, retriever in retrievers.items():
-            init_top_k = initial_top_k.get(approach_name) if initial_top_k else None
+            # Get initial_top_k for this approach if specified
+            approach_initial_top_k = None
+            if initial_top_k is not None and approach_name in initial_top_k:
+                approach_initial_top_k = initial_top_k[approach_name]
             
+            # Evaluate approach
             approach_results = self.evaluate_approach(
                 approach_name=approach_name,
                 retriever=retriever,
@@ -199,14 +249,18 @@ class Evaluator:
                 sentence2_list=sentence2_list,
                 ground_truth_labels=ground_truth_labels,
                 top_k=top_k,
-                initial_top_k=init_top_k
+                initial_top_k=approach_initial_top_k
             )
             
+            # Store results
             results[approach_name] = approach_results
         
         return results
     
-    def save_results(self, results: Dict[str, Dict[str, Any]], output_dir: str = "evaluation_results") -> str:
+    def save_results(self, 
+        results: Dict[str, Dict[str, Any]], 
+        output_dir: str = "evaluation_results"
+    ) -> str:
         """Save evaluation results to file.
         
         Args:
@@ -258,8 +312,10 @@ class Evaluator:
         
         return results
     
-    def visualize_comparison(self, comparison: Dict[str, Dict[str, float]], 
-                           output_path: Optional[str] = None) -> None:
+    def visualize_comparison(self, 
+        comparison: Dict[str, Dict[str, float]], 
+        output_path: Optional[str] = None
+    ) -> None:
         """Visualize comparison of different approaches.
         
         Args:

@@ -20,18 +20,9 @@ class TestRetrieval:
     @pytest.fixture
     def sample_sentences(self):
         """Fixture for sample sentences to be indexed"""
-        return [
-            "人工智能正在改变世界",
-            "深度学习是人工智能的一个重要分支",
-            "大语言模型已经取得了长足的进步",
-            "机器学习算法需要大量的数据进行训练",
-            "计算机视觉技术可以识别图像中的物体",
-            "自然语言处理让机器能够理解人类语言",
-            "强化学习是机器学习中的一种方法",
-            "知识图谱可以表示实体之间的关系",
-            "语义检索可以帮助我们找到相关的信息",
-            "人工智能伦理是一个重要的研究领域"
-        ]
+        test_dataset_path = Path("tests/test_data/test_dataset.csv")
+        test_dataset = pd.read_csv(test_dataset_path)
+        return test_dataset["sentence2"].tolist()
     
     @pytest.fixture
     def test_query(self):

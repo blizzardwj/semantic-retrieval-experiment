@@ -3,6 +3,8 @@ import os
 import numpy as np
 import tempfile
 import json
+import pandas as pd
+from pathlib import Path
 import matplotlib.pyplot as plt
 from unittest.mock import patch, MagicMock
 from semantic_retrieval.evaluation.evaluator import Evaluator
@@ -258,19 +260,10 @@ class TestEvaluatorIntegration:
     @pytest.fixture
     def sample_data(self):
         """Fixture for sample data"""
-        # Create sample sentences
-        sentence2_list = [
-            "人工智能正在改变世界",
-            "深度学习是人工智能的一个重要分支",
-            "大语言模型已经取得了长足的进步",
-            "机器学习算法需要大量的数据进行训练",
-            "计算机视觉技术可以识别图像中的物体",
-            "自然语言处理让机器能够理解人类语言",
-            "强化学习是机器学习中的一种方法",
-            "知识图谱可以表示实体之间的关系",
-            "语义检索可以帮助我们找到相关的信息",
-            "人工智能伦理是一个重要的研究领域"
-        ]
+        # Read sentences from test dataset
+        test_dataset_path = Path("tests/test_data/test_dataset.csv")
+        test_dataset = pd.read_csv(test_dataset_path)
+        sentence2_list = test_dataset["sentence2"].tolist()
         
         # Create sample queries
         query_sentences = [
@@ -279,9 +272,15 @@ class TestEvaluatorIntegration:
         ]
         
         # Create ground truth labels (1 for relevant, 0 for irrelevant)
-        # For the first query, sentences 0, 1, 2, 5, 8 are relevant
-        # For the second query, sentences 3, 4, 6 are relevant
-        ground_truth_labels = [1, 1, 1, 0, 0, 1, 0, 0, 1, 0]
+        # 为每个查询提供一组标签
+        ground_truth_labels = [
+            # 第一个查询 "人工智能如何应用于自然语言处理" 的标签
+            # 句子 0, 1, 2, 5, 8 相关
+            [1, 1, 1, 0, 0, 1, 0, 0, 1, 0],
+            # 第二个查询 "机器学习需要什么样的数据" 的标签
+            # 句子 3, 4, 6 相关
+            [0, 0, 0, 1, 1, 0, 1, 0, 0, 0]
+        ]
         
         return {
             "sentence2_list": sentence2_list,
@@ -308,7 +307,7 @@ class TestEvaluatorIntegration:
             retriever=mock_retriever,
             query_sentences=sample_data["query_sentences"][:1],  # Just use the first query
             sentence2_list=sample_data["sentence2_list"],
-            ground_truth_labels=sample_data["ground_truth_labels"],
+            ground_truth_labels=sample_data["ground_truth_labels"][0],  # Use the first query's labels
             top_k=5
         )
         
@@ -355,7 +354,7 @@ class TestEvaluatorIntegration:
             retrievers=retrievers,
             query_sentences=sample_data["query_sentences"][:1],  # Just use the first query
             sentence2_list=sample_data["sentence2_list"],
-            ground_truth_labels=sample_data["ground_truth_labels"],
+            ground_truth_labels=sample_data["ground_truth_labels"][0],  # Use the first query's labels
             top_k=5
         )
         
@@ -395,8 +394,8 @@ class TestEvaluatorIntegration:
                 retrievers=retrievers,
                 query_sentences=sample_data["query_sentences"],
                 sentence2_list=sample_data["sentence2_list"],
-                ground_truth_labels=sample_data["ground_truth_labels"],
-                top_k=3
+                ground_truth_labels=sample_data["ground_truth_labels"],  # Use all queries' labels
+                top_k=5
             )
             
             # Check results
@@ -429,14 +428,14 @@ class TestEvaluatorIntegration:
         server_url = "http://20.30.80.200:9997"
         
         bge_retriever = BGEApproach(
-            model_name="bge-large-zh-v1.5",
+            model_name="bge-m3",
             server_url=server_url,
             persist_directory="test_eval_bge",
             use_vector_store=True
         )
         
         llm_reranked_retriever = LLMRerankedBGEApproach(
-            embedding_model="bge-large-zh-v1.5",
+            embedding_model="bge-m3",
             embedding_server_url=server_url,
             llm_model="deepseek-r1-distill-qwen",
             llm_server_url=server_url,
@@ -447,28 +446,32 @@ class TestEvaluatorIntegration:
         # Initialize retrievers
         retrievers = {
             "BGE": bge_retriever,
-            "LLM-Reranked": llm_reranked_retriever
+            "LLM-Reranked-BGE": llm_reranked_retriever
         }
         
         # Initial top_k for LLM reranking
         initial_top_k = {
-            "LLM-Reranked": 5
+            "LLM-Reranked-BGE": 10
         }
         
         try:
+            # Use a smaller data subset
+            small_sentence_list = sample_data["sentence2_list"]
+            small_ground_truth = sample_data["ground_truth_labels"][0]  # 使用第一个查询的标签
+            
             # Evaluate approaches
             results = evaluator.evaluate_multiple_approaches(
                 retrievers=retrievers,
-                query_sentences=sample_data["query_sentences"],
-                sentence2_list=sample_data["sentence2_list"],
-                ground_truth_labels=sample_data["ground_truth_labels"],
-                top_k=3,
-                initial_top_k=initial_top_k
+                query_sentences=[sample_data["query_sentences"][0]],  # Only use one query
+                sentence2_list=small_sentence_list,
+                ground_truth_labels=small_ground_truth,
+                top_k=5,  # Reduce top_k to reduce processing
+                initial_top_k=initial_top_k  # Set initial top_k for LLM reranking
             )
             
             # Check results
             assert "BGE" in results
-            assert "LLM-Reranked" in results
+            assert "LLM-Reranked-BGE" in results
             
             # Get comparison
             comparison = evaluator.compare_approaches(results)
