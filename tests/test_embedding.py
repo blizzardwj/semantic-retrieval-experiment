@@ -102,12 +102,12 @@ class TestBGEEmbedding:
         mock_embedding.embed_query.return_value = [0.1, 0.2, 0.3]
         
         # 测试嵌入
-        embedding = initialized_bge_model.embed("测试文本")
+        embedding = initialized_bge_model.embed_query("测试文本")
         
         # 验证
         mock_embedding.embed_query.assert_called_once_with("测试文本")
-        assert isinstance(embedding, np.ndarray)
-        assert embedding.tolist() == [0.1, 0.2, 0.3]
+        assert isinstance(embedding, list)
+        assert embedding == [0.1, 0.2, 0.3]
     
     def test_bge_embed_batch(self, initialized_bge_model):
         """Test BGE embedding of a batch of texts"""
@@ -117,21 +117,22 @@ class TestBGEEmbedding:
         
         # 测试批量嵌入
         texts = ["测试文本1", "测试文本2"]
-        embeddings = initialized_bge_model.embed_batch(texts)
+        embeddings = initialized_bge_model.embed_documents(texts)
         
         # 验证
         mock_embedding.embed_documents.assert_called_once_with(texts)
-        assert isinstance(embeddings, np.ndarray)
-        assert embeddings.shape == (2, 3)
-        assert embeddings.tolist() == [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+        assert isinstance(embeddings, list)
+        assert len(embeddings) == 2
+        assert embeddings[0] == [0.1, 0.2, 0.3]
+        assert embeddings[1] == [0.4, 0.5, 0.6]
     
     def test_bge_not_initialized(self, bge_model):
         """Test error when BGE model is not initialized"""
         with pytest.raises(ValueError, match="Model not initialized"):
-            bge_model.embed("测试文本")
+            bge_model.embed_query("测试文本")
         
         with pytest.raises(ValueError, match="Model not initialized"):
-            bge_model.embed_batch(["测试文本1", "测试文本2"])
+            bge_model.embed_documents(["测试文本1", "测试文本2"])
 
 
 class TestFastTextEmbedding:
@@ -204,12 +205,12 @@ class TestFastTextEmbedding:
         mock_fasttext.load_model.return_value = mock_model
         
         # 测试自动初始化
-        embedding = fasttext_model.embed("测试文本")
+        embedding = fasttext_model.embed_query("测试文本")
         
         # 验证模型自动加载
         mock_fasttext.load_model.assert_called_once_with("/home/zfwj/workspace/new_code/fasttext_model/cc.zh.300.bin")
         mock_model.get_sentence_vector.assert_called_once_with("测试文本")
-        assert isinstance(embedding, np.ndarray)
+        assert isinstance(embedding, list)
     
     def test_fasttext_embed_batch(self, initialized_fasttext_model):
         """Test FastText embedding of a batch of texts"""
@@ -263,14 +264,14 @@ class TestIntegration:
             model_uid="bge-large-zh-v1.5"
         )
         
-        embedding = model.embed("测试文本")
-        assert isinstance(embedding, np.ndarray)
-        assert embedding.shape[0] > 0  # 确保嵌入维度正确
+        embedding = model.embed_query("测试文本")
+        assert isinstance(embedding, list)
+        assert len(embedding) > 0  # 确保嵌入维度正确
         
         # 批量测试
-        embeddings = model.embed_batch(["测试文本1", "测试文本2"])
-        assert isinstance(embeddings, np.ndarray)
-        assert embeddings.shape[0] == 2
+        embeddings = model.embed_documents(["测试文本1", "测试文本2"])
+        assert isinstance(embeddings, list)
+        assert len(embeddings) == 2
         
     def test_fasttext_actual_embedding(self):
         """测试实际FastText模型嵌入功能"""
@@ -281,11 +282,11 @@ class TestIntegration:
         
         model = FastTextEmbedding(model_path=model_path)
         
-        embedding = model.embed("测试文本")
-        assert isinstance(embedding, np.ndarray)
-        assert embedding.shape[0] == 300  # FastText通常是300维
+        embedding = model.embed_query("测试文本")
+        assert isinstance(embedding, list)
+        assert len(embedding) == 300  # FastText通常是300维
         
         # 批量测试
-        embeddings = model.embed_batch(["测试文本1", "测试文本2"])
-        assert isinstance(embeddings, np.ndarray)
-        assert embeddings.shape == (2, 300)
+        embeddings = model.embed_documents(["测试文本1", "测试文本2"])
+        assert isinstance(embeddings, list)
+        assert len(embeddings) == 2
