@@ -215,9 +215,14 @@ class SemanticMatchingRunner:
         sentence2 = row['sentence2']
         
         # 执行各模型的语义匹配
-        word2vec_score = self.run_word2vec_matching(sentence1, sentence2)
-        bge_large_score = self.run_bge_large_matching(sentence1, sentence2)
-        bge_m3_score = self.run_bge_m3_matching(sentence1, sentence2)
+        # word2vec_score = self.run_word2vec_matching(sentence1, sentence2)
+        # bge_large_score = self.run_bge_large_matching(sentence1, sentence2)
+        # bge_m3_score = self.run_bge_m3_matching(sentence1, sentence2)
+
+        # use simulated results
+        word2vec_score = 0.5
+        bge_large_score = 0.5
+        bge_m3_score = 0.5
         
         # 返回结果字典
         return {
@@ -390,6 +395,7 @@ class SemanticMatchingRunner:
         # 显示整体进度
         dataset_completion = len(self.processed_indices) / self.data_manager.total_rows * 100
         print(f"已处理 {len(self.processed_indices)} 行，占总数的 {dataset_completion:.2f}%")
+        print("======================"*3)
     
     def run(self, max_rows: Optional[int] = None) -> None:
         """

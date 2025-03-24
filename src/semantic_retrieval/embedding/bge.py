@@ -2,8 +2,7 @@
 Implementation for BGE embedding models using LangChain and Xinference.
 """
 from semantic_retrieval.embedding.base import EmbeddingModel
-import numpy as np
-from typing import Optional, List, Union, Any
+from typing import Optional, List
 
 class BGEEmbedding(EmbeddingModel):
     """Implementation for BGE embedding models using LangChain and Xinference."""

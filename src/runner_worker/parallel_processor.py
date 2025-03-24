@@ -1,3 +1,8 @@
+from src.runner_worker.checkpoint_manager import RobustCheckpointManager
+from src.runner_worker.data_manager import ChunkedDataManager
+from src.runner_worker.model_runner import ModelRunner
+
+
 class ParallelProcessor:
     """
     管理多进程处理任务，协调整个处理流程。
@@ -14,7 +19,11 @@ class ParallelProcessor:
     - 输出: 将结果传递给ChunkedDataManager保存，将进度信息传递给RobustCheckpointManager
     """
     
-    def __init__(self, data_manager, model_runner, checkpoint_manager):
+    def __init__(self, 
+        data_manager: ChunkedDataManager,
+        model_runner: ModelRunner,
+        checkpoint_manager: RobustCheckpointManager
+    ):
         """
         初始化并行处理器。
         
