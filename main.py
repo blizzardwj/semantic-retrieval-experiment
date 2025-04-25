@@ -5,7 +5,7 @@
 Main entry point for the semantic retrieval experiment.
 """
 
-from semantic_retrieval.data_loader import DataLoader
+from semantic_retrieval.data.data_loader import DataLoader
 from semantic_retrieval.retrieval.word2vec import Word2VecApproach
 from semantic_retrieval.retrieval.bge import BGEApproach
 from semantic_retrieval.retrieval.llm_reranked import LLMRerankedBGEApproach

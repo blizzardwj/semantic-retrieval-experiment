@@ -40,7 +40,7 @@ class FastTextModelRunner(ModelRunner):
         model.initialize()
         return model
     
-    def preprocess(self, row_data):
+    def preprocess(self, row_data: Dict[str, Any]):
         """
         对输入行数据进行预处理
         
@@ -64,7 +64,7 @@ class FastTextModelRunner(ModelRunner):
         
         return sentence1, sentence2
     
-    def predict(self, row_data):
+    def predict(self, row_data: Dict[str, Any]):
         """
         使用FastText模型执行语义匹配预测
         
@@ -93,7 +93,7 @@ class FastTextModelRunner(ModelRunner):
             print(f"FastText语义匹配预测错误: {e}")
             return 0.0
     
-    def batch_predict(self, rows_data):
+    def batch_predict(self, rows_data:Union[pd.DataFrame, List[Dict[str, Any]]]):
         """
         对多行数据批量运行预测
         
@@ -139,7 +139,7 @@ class BGEModelRunner(ModelRunner):
         
         Args:
             model_name: BGE模型名称，如'bge-large-zh-v1.5'或'bge-m3'
-            server_url: XInference服务器URL
+            server_url: Xinference服务器URL
             model_uid: 模型UID，如果不提供则使用model_name
             input_columns: 输入列名，默认为['sentence1', 'sentence2']
             device: 计算设备，默认为'cpu'
@@ -163,7 +163,7 @@ class BGEModelRunner(ModelRunner):
         model.initialize(server_url=self.server_url, model_uid=self.model_uid)
         return model
     
-    def preprocess(self, row_data):
+    def preprocess(self, row_data: Dict[str, Any]):
         """
         对输入行数据进行预处理
         
@@ -187,7 +187,7 @@ class BGEModelRunner(ModelRunner):
         
         return sentence1, sentence2
     
-    def predict(self, row_data):
+    def predict(self, row_data: Dict[str, Any]):
         """
         使用BGE模型执行语义匹配预测
         
@@ -216,7 +216,7 @@ class BGEModelRunner(ModelRunner):
             print(f"BGE语义匹配预测错误: {e}")
             return 0.0
     
-    def batch_predict(self, rows_data):
+    def batch_predict(self, rows_data: Union[pd.DataFrame, List[Dict[str, Any]]]):
         """
         对多行数据批量运行预测
         
@@ -261,7 +261,7 @@ class BGELargeModelRunner(BGEModelRunner):
         初始化BGE-Large模型运行器
         
         Args:
-            server_url: XInference服务器URL
+            server_url: Xinference服务器URL
             input_columns: 输入列名，默认为['sentence1', 'sentence2']
             device: 计算设备，默认为'cpu'
         """

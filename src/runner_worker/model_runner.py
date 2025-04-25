@@ -45,7 +45,7 @@ class ModelRunner(ABC):
         对输入行数据进行预处理。
         
         Args:
-            row_data (pandas.Series): 行数据
+            row_data (dict): 行数据
             
         Returns:
             object: 预处理后的模型输入
@@ -60,7 +60,7 @@ class ModelRunner(ABC):
         包含错误处理机制，确保模型故障不会中断整个处理流程。
         
         Args:
-            row_data (pandas.Series): 行数据
+            row_data (dict): 行数据
             
         Returns:
             object: 模型预测结果
@@ -73,7 +73,7 @@ class ModelRunner(ABC):
         对多行数据批量运行预测，提高处理效率。
         
         Args:
-            rows_data (pandas.DataFrame): 多行数据
+            rows_data (list[dict]): 多行数据
             
         Returns:
             dict: 行索引到预测结果的映射
