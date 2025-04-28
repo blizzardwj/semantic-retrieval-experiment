@@ -3,7 +3,7 @@ import numpy as np
 import time
 from typing import List, Dict, Any, Optional, Iterator, Tuple
 from src.runner_worker.model_runner import ModelRunner
-from src.runner_worker.data_manager import DataSource, InMemoryDataSource, CSVFileDataSource
+from src.runner_worker.data_source import DataSource, InMemoryDataSource, CSVFileDataSource
 from src.runner_worker.checkpoint_manager import ResultAccumulator, DataFrameAccumulator
 
 

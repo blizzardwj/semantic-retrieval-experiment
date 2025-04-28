@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Union
+from typing import Dict, Any, List, Union, Optional, Callable
 import pandas as pd
 import time
 from pathlib import Path
@@ -77,12 +77,13 @@ class DataFrameAccumulator(ResultAccumulator):
     to DataFrames and concatenates them at the end.
     """
     
-    def __init__(self, chunk_size: int, saver: Callable[[pd.DataFrame], str] = None):
+    def __init__(self, chunk_size: int, saver: Optional[Callable[[pd.DataFrame], str]] = None):
         """
         Initialize the DataFrameAccumulator.
         
         Args:
             chunk_size: Number of results to accumulate before saving to a DataFrame
+            saver: Optional function to save completed chunks to files
         """
         self.chunk_size = chunk_size
         self.completed_chunk_df: pd.DataFrame = pd.DataFrame()
