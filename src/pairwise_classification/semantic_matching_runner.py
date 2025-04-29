@@ -13,502 +13,228 @@ import pandas as pd
 from typing import Dict, List, Tuple, Any, Optional, Set
 from concurrent.futures import ThreadPoolExecutor
 import threading
+from pathlib import Path
 
 # 添加src目录到Python路径
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+# sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from src.runner_worker.data_manager import ChunkedDataManager
+from src.runner_worker.experiment_runner import ExperimentRunner
+# Assuming the new runner is in the same directory or appropriately pathed
+from src.pairwise_classification.similarity_model_runner import SimilarityModelRunner
+# Assuming embedding models are importable
+from src.pairwise_classification.embedding.fasttext import FastTextEmbedding
+from src.pairwise_classification.embedding.bge import BGEEmbedding
+from src.utils import build_logger
+from src.utils.utils import load_config
 
-class SemanticMatchingRunner:
+logger = build_logger(__name__)
+
+class SemanticMatchingRunner(ExperimentRunner):
     """
-    语义匹配实验运行器，负责协调数据管理和模型运行。
+    语义匹配实验运行器，使用ExperimentRunner基类协调数据管理和模型运行。
     
-    主要功能:
-    - 使用ChunkedDataManager分块读取大型数据集
-    - 对每个数据块执行不同模型的语义匹配
-    - 将结果保存到新的CSV文件中
+    通过实现 _init_data_manager 和 _init_model_runners 来配置具体的数据源和模型。
     """
-    
+
     def __init__(self, 
                  data_path: str, 
                  chunksize: int = 10000, 
                  experiment_id: Optional[str] = None,
                  checkpoint_interval: int = 1000,
                  batch_size: int = 32,
-                 n_jobs: int = 4):
+                 n_jobs: int = 4,
+                 fasttext_model_path: str = "",
+                 xinference_server_url: str = ""):
         """
-        初始化语义匹配运行器。
+        Initialize the semantic matching runner.
         
         Args:
-            data_path: 数据文件路径
-            chunksize: 每次处理的数据块大小
-            experiment_id: 实验ID，用于标识输出文件
-            checkpoint_interval: 保存检查点的间隔行数
-            batch_size: 并行处理的批量大小
-            n_jobs: 并行处理的作业数，-1表示使用所有可用CPU
+            data_path: Path to the data file.
+            chunksize: Size of data chunks to process.
+            experiment_id: ID for the experiment (used for output and checkpoints).
+            checkpoint_interval: How often to save checkpoints (in number of rows).
+            batch_size: Size of batches for parallel processing.
+            n_jobs: Number of parallel jobs (-1 uses all available cores).
+            fasttext_model_path: Path to the FastText model binary.
+            xinference_server_url: URL of the XInference server for BGE models.
         """
-        self.data_path = data_path
-        self.chunksize = chunksize
-        self.experiment_id = experiment_id or f"exp_{int(time.time())}"
-        self.checkpoint_interval = checkpoint_interval
-        self.batch_size = batch_size
-        self.n_jobs = n_jobs
+        # Store model configurations
+        if fasttext_model_path and xinference_server_url:
+            self._fasttext_model_path = fasttext_model_path
+            self._xinference_server_url = xinference_server_url
+        else:
+            raise ValueError("fasttext_model_path or xinference_server_url not provided")
+
+        # Initialize the base ExperimentRunner
+        super().__init__(
+            data_path=data_path,
+            chunksize=chunksize,
+            experiment_id=experiment_id,
+            checkpoint_interval=checkpoint_interval,
+            batch_size=batch_size,
+            n_jobs=n_jobs
+        )
+
+        logger.info(f"Initialized SemanticMatchingRunner (inheriting from ExperimentRunner)")
+        logger.info(f"Data Path: {self.data_manager.csv_path}")
+        logger.info(f"Total Rows: {self.data_manager.total_rows}")
+        logger.info(f"Experiment ID: {self.experiment_id}")
+        logger.info(f"Chunk Size: {self.chunksize}")
+        logger.info(f"Batch Size: {self.batch_size}")
+        logger.info(f"Checkpoint Interval: {self.checkpoint_interval}")
+        logger.info(f"Number of Jobs: {self.n_jobs}")
+        logger.info(f"Result Columns: {list(self.model_runners.keys())}")
+        logger.info(f"Output Path: {self.data_manager.output_path}")
         
-        # 初始化数据管理器
-        self.data_manager = ChunkedDataManager(
+    def _init_data_manager(
+        self, data_path: str, chunksize: int, experiment_id: Optional[str]
+    ) -> ChunkedDataManager:
+        """
+        Create and return the ChunkedDataManager instance.
+        Result columns are determined by the keys of the dictionary returned by _init_model_runners.
+        """
+        # Define the expected result columns based on model runner keys
+        # This ensures the data manager is aware of the columns the runners will produce.
+        # We can get these keys after _init_model_runners is called, but DataManager needs them at init.
+        # Let's hardcode them here based on what _init_model_runners *will* return.
+        result_columns = [
+            'word2vec_match_res',
+            'bge_large_match_res',
+            'bge_m3_match_res'
+        ]
+        
+        return ChunkedDataManager(
             csv_path=data_path,
             chunksize=chunksize,
-            experiment_id=self.experiment_id
+            experiment_id=experiment_id,
+            result_columns=result_columns # Pass the expected columns
         )
-        
-        # 已处理的行索引集合，用于断点续传
-        self.processed_indices: Set[int] = set()
-        
-        # 结果缓存，定期保存到文件
-        self.results_cache: Dict[int, Dict[str, float]] = {}
-        
-        # 模型缓存，避免重复初始化
-        self._fasttext_model = None
-        self._bge_large_model = None
-        self._bge_m3_model = None
-        
-        # 模型配置
-        self._fasttext_model_path = "/home/zfwj/workspace/new_code/fasttext_model/cc.zh.300.bin"
-        self._xinference_server_url = "http://20.30.80.200:9997"
-        
-        print(f"初始化语义匹配运行器，数据文件: {data_path}")
-        print(f"数据集总行数: {self.data_manager.total_rows}")
-        print(f"实验ID: {self.experiment_id}")
-        print(f"并行配置: 批量大小={batch_size}, 作业数={n_jobs}")
-    
-    def _initialize_fasttext_model(self):
-        """初始化FastText模型（如果尚未初始化）"""
-        if self._fasttext_model is None:
-            from semantic_retrieval.embedding.fasttext import FastTextEmbedding
-            print("初始化FastText模型...")
-            self._fasttext_model = FastTextEmbedding(model_path=self._fasttext_model_path)
-            self._fasttext_model.initialize()
-        return self._fasttext_model
-    
-    def _initialize_bge_large_model(self):
-        """初始化BGE-Large模型（如果尚未初始化）"""
-        if self._bge_large_model is None:
-            from semantic_retrieval.embedding.bge import BGEEmbedding
-            print("初始化BGE-Large模型...")
-            self._bge_large_model = BGEEmbedding(model_name="bge-large-zh-v1.5")
-            self._bge_large_model.initialize(
+
+    def _init_model_runners(self) -> Dict[str, SimilarityModelRunner]:
+        """
+        Initialize embedding models and wrap them in SimilarityModelRunners.
+        Returns a dictionary mapping result column names to their runners.
+        """
+        model_runners = {}
+        input_cols = ['sentence1', 'sentence2']
+
+        try:
+            # Initialize FastText
+            logger.info("Initializing FastText model...")
+            fasttext_embedding = FastTextEmbedding(model_path=self._fasttext_model_path)
+            fasttext_embedding.initialize()
+            model_runners['word2vec_match_res'] = SimilarityModelRunner(
+                embedding_model=fasttext_embedding,
+                input_columns=input_cols
+            )
+            logger.info("FastText model initialized.")
+        except Exception as e:
+            logger.error(f"Failed to initialize FastText model: {e}. Skipping Word2Vec matching.")
+
+        try:
+            # Initialize BGE-Large
+            logger.info("Initializing BGE-Large model...")
+            bge_large_embedding = BGEEmbedding(model_name="bge-large-zh-v1.5")
+            bge_large_embedding.initialize(
                 server_url=self._xinference_server_url, 
                 model_uid="bge-large-zh-v1.5"
             )
-        return self._bge_large_model
-    
-    def _initialize_bge_m3_model(self):
-        """初始化BGE-M3模型（如果尚未初始化）"""
-        if self._bge_m3_model is None:
-            from semantic_retrieval.embedding.bge import BGEEmbedding
-            print("初始化BGE-M3模型...")
-            self._bge_m3_model = BGEEmbedding(model_name="bge-m3")
-            self._bge_m3_model.initialize(
+            model_runners['bge_large_match_res'] = SimilarityModelRunner(
+                embedding_model=bge_large_embedding,
+                input_columns=input_cols
+            )
+            logger.info("BGE-Large model initialized.")
+        except Exception as e:
+            logger.error(f"Failed to initialize BGE-Large model: {e}. Skipping BGE-Large matching.")
+        
+        try:
+            # Initialize BGE-M3
+            logger.info("Initializing BGE-M3 model...")
+            bge_m3_embedding = BGEEmbedding(model_name="bge-m3")
+            bge_m3_embedding.initialize(
                 server_url=self._xinference_server_url, 
                 model_uid="bge-m3"
             )
-        return self._bge_m3_model
-    
-    def run_word2vec_matching(self, sentence1: str, sentence2: str) -> float:
-        """
-        使用Word2Vec模型执行语义匹配。
-        
-        使用FastText模型计算两个句子的嵌入向量，然后计算余弦相似度。
-        
-        Args:
-            sentence1: 第一个句子
-            sentence2: 第二个句子
-            
-        Returns:
-            相似度分数 (0-1)
-        """
-        import numpy as np
-        from sklearn.metrics.pairwise import cosine_similarity
-        
-        # 获取或初始化FastText模型
-        model = self._initialize_fasttext_model()
-        
-        # 获取句子嵌入向量
-        embedding1 = np.array(model.embed_query(sentence1)).reshape(1, -1)
-        embedding2 = np.array(model.embed_query(sentence2)).reshape(1, -1)
-        
-        # 计算余弦相似度
-        similarity = cosine_similarity(embedding1, embedding2)[0][0]
-        
-        # 确保相似度在0-1范围内
-        return float(max(0, min(1, similarity)))
-    
-    def run_bge_large_matching(self, sentence1: str, sentence2: str) -> float:
-        """
-        使用BGE-Large模型执行语义匹配。
-        
-        使用BGE-Large模型计算两个句子的嵌入向量，然后计算余弦相似度。
-        
-        Args:
-            sentence1: 第一个句子
-            sentence2: 第二个句子
-            
-        Returns:
-            相似度分数 (0-1)
-        """
-        import numpy as np
-        from sklearn.metrics.pairwise import cosine_similarity
-        
-        # 获取或初始化BGE-Large模型
-        model = self._initialize_bge_large_model()
-        
-        # 获取句子嵌入向量
-        embedding1 = np.array(model.embed_query(sentence1)).reshape(1, -1)
-        embedding2 = np.array(model.embed_query(sentence2)).reshape(1, -1)
-        
-        # 计算余弦相似度
-        similarity = cosine_similarity(embedding1, embedding2)[0][0]
-        
-        # 确保相似度在0-1范围内
-        return float(max(0, min(1, similarity)))
-    
-    def run_bge_m3_matching(self, sentence1: str, sentence2: str) -> float:
-        """
-        使用BGE-M3模型执行语义匹配。
-        
-        使用BGE-M3模型计算两个句子的嵌入向量，然后计算余弦相似度。
-        
-        Args:
-            sentence1: 第一个句子
-            sentence2: 第二个句子
-            
-        Returns:
-            相似度分数 (0-1)
-        """
-        import numpy as np
-        from sklearn.metrics.pairwise import cosine_similarity
-        
-        # 获取或初始化BGE-M3模型
-        model = self._initialize_bge_m3_model()
-        
-        # 获取句子嵌入向量
-        embedding1 = np.array(model.embed_query(sentence1)).reshape(1, -1)
-        embedding2 = np.array(model.embed_query(sentence2)).reshape(1, -1)
-        
-        # 计算余弦相似度
-        similarity = cosine_similarity(embedding1, embedding2)[0][0]
-        
-        # 确保相似度在0-1范围内
-        return float(max(0, min(1, similarity)))
-    
-    def process_row(self, row: pd.Series) -> Dict[str, float]:
-        """
-        处理单行数据，执行所有模型的语义匹配。
-        
-        Args:
-            row: 数据行，包含sentence1和sentence2
-            
-        Returns:
-            包含各模型结果的字典
-        """
-        sentence1 = row['sentence1']
-        sentence2 = row['sentence2']
-        
-        # 执行各模型的语义匹配
-        # word2vec_score = self.run_word2vec_matching(sentence1, sentence2)
-        # bge_large_score = self.run_bge_large_matching(sentence1, sentence2)
-        # bge_m3_score = self.run_bge_m3_matching(sentence1, sentence2)
+            model_runners['bge_m3_match_res'] = SimilarityModelRunner(
+                embedding_model=bge_m3_embedding,
+                input_columns=input_cols
+            )
+            logger.info("BGE-M3 model initialized.")
+        except Exception as e:
+            logger.error(f"Failed to initialize BGE-M3 model: {e}. Skipping BGE-M3 matching.")
 
-        # use simulated results
-        word2vec_score = 0.5
-        bge_large_score = 0.5
-        bge_m3_score = 0.5
-        
-        # 返回结果字典
-        return {
-            'word2vec_match_res': word2vec_score,
-            'bge_large_match_res': bge_large_score,
-            'bge_m3_match_res': bge_m3_score
-        }
-    
-    def process_batch(self, rows: List[Tuple[int, pd.Series]]) -> Dict[int, Dict[str, float]]:
-        """
-        并行处理一批数据行。
-        
-        Args:
-            rows: 包含(全局索引, 数据行)的元组列表
+        if not model_runners:
+            raise RuntimeError("No models could be initialized. Cannot run experiment.")
             
-        Returns:
-            全局索引到结果字典的映射
-        """
-        # 确保所有模型都已初始化，避免在并行任务中重复初始化
-        self._initialize_fasttext_model()
-        self._initialize_bge_large_model()
-        self._initialize_bge_m3_model()
-        
-        # 使用线程池而不是进程池，避免pickling问题
-        results = {}
-        
-        # 定义单行处理函数
-        def process_single_row(global_idx, row):
-            result = self.process_row(row)
-            return global_idx, result
-        
-        # 使用线程池并行处理
-        with ThreadPoolExecutor(max_workers=self.n_jobs) as executor:
-            # 提交所有任务
-            future_to_idx = {
-                executor.submit(process_single_row, global_idx, row): global_idx 
-                for global_idx, row in rows
-            }
-            
-            # 收集结果
-            for future in future_to_idx:
-                try:
-                    global_idx, result = future.result()
-                    results[global_idx] = result
-                except Exception as e:
-                    print(f"处理行时出错: {e}")
-        
-        return results
-    
-    def process_chunk(self, chunk_idx: int, chunk: pd.DataFrame) -> Dict[str, Any]:
-        """
-        处理数据块，对每行执行语义匹配。
-        
-        Args:
-            chunk_idx: 数据块索引
-            chunk: 数据块DataFrame
-            
-        Returns:
-            包含处理进度信息的字典，包括：
-            - results: 索引到结果的映射字典
-            - processed_in_chunk: 本次处理的行数
-            - chunk_completion: 当前数据块的完成百分比
-            - dataset_completion: 整个数据集的完成百分比
-        """
-        chunk_results = {}
-        processed_in_chunk = 0
-        
-        # 获取数据块的全局索引范围
-        global_indices = set(int(row[self.data_manager.global_index_column]) for _, row in chunk.iterrows())
-        total_in_chunk = len(global_indices)
-        already_processed_in_chunk = len(global_indices.intersection(self.processed_indices))
-        
-        # 收集未处理的行
-        unprocessed_rows = []
-        for _, row in chunk.iterrows():
-            # 获取全局索引
-            global_index = int(row[self.data_manager.global_index_column])
-            
-            # 如果已经处理过，跳过
-            if global_index in self.processed_indices:
-                continue
-                
-            # 添加到未处理行列表
-            unprocessed_rows.append((global_index, row))
-            
-            # 当积累了足够的未处理行，进行批量处理
-            if len(unprocessed_rows) >= self.batch_size:
-                # 批量处理行
-                batch_results = self.process_batch(unprocessed_rows)
-                
-                # 更新结果和计数
-                chunk_results.update(batch_results)
-                processed_in_chunk += len(batch_results)
-                
-                # 更新已处理索引集合和结果缓存
-                for idx, result in batch_results.items():
-                    self.processed_indices.add(idx)
-                    self.results_cache[idx] = result
-                
-                # 清空未处理行列表
-                unprocessed_rows = []
-                
-                # 定期保存结果
-                if len(self.results_cache) >= self.checkpoint_interval:
-                    self.save_checkpoint(chunk_idx)
-                    self.results_cache.clear()
-        
-        # 处理剩余的未处理行
-        if unprocessed_rows:
-            batch_results = self.process_batch(unprocessed_rows)
-            
-            # 更新结果和计数
-            chunk_results.update(batch_results)
-            processed_in_chunk += len(batch_results)
-            
-            # 更新已处理索引集合和结果缓存
-            for idx, result in batch_results.items():
-                self.processed_indices.add(idx)
-                self.results_cache[idx] = result
-        
-        # 计算完成百分比
-        processed_in_chunk_total = processed_in_chunk + already_processed_in_chunk
-        chunk_completion = (processed_in_chunk_total / total_in_chunk * 100) if total_in_chunk > 0 else 100.0
-        dataset_completion = (len(self.processed_indices) / self.data_manager.total_rows * 100)
-        
-        return {
-            "results": chunk_results,
-            "processed_in_chunk": processed_in_chunk,
-            "chunk_completion": chunk_completion,
-            "dataset_completion": dataset_completion,
-        }
-    
-    def save_checkpoint(self, chunk_idx: int) -> None:
-        """
-        保存当前结果缓存到文件，并清空缓存
-        
-        Args:
-            chunk_idx: 当前处理的数据块索引
-        """
-        if not self.results_cache:
-            return
-        
-        # 计算当前chunk的起始和结束索引
-        chunk_start_idx = chunk_idx * self.data_manager.chunksize
-        chunk_end_idx = min((chunk_idx + 1) * self.data_manager.chunksize, self.data_manager.total_rows)
-        
-        # 获取结果缓存中的最大和最小索引
-        min_result_index = min(self.results_cache.keys()) if self.results_cache else -1
-        max_result_index = max(self.results_cache.keys()) if self.results_cache else -1
-        
-        # 计算当前chunk的完成百分比
-        chunk_size = chunk_end_idx - chunk_start_idx
-        processed_in_chunk = sum(1 for idx in self.processed_indices if chunk_start_idx <= idx < chunk_end_idx)
-        chunk_completion = (processed_in_chunk / chunk_size * 100) if chunk_size > 0 else 100.0
-        
-        print(f"保存检查点，chunk_idx={chunk_idx}，包含 {len(self.results_cache)} 条结果...")
-        print(f"当前chunk范围: {chunk_start_idx}-{chunk_end_idx-1}，处理进度: {chunk_completion:.2f}%")
-        print(f"结果索引范围: {min_result_index}-{max_result_index}")
-        
-        # 保存结果
-        success = self.data_manager.save_results(chunk_idx, self.results_cache)
-        if not success:
-            print("警告: 保存结果失败")
-        else:
-            print(f"检查点保存成功")
-        
-        # 清空缓存
-        self.results_cache.clear()
-        
-        # 显示整体进度
-        dataset_completion = len(self.processed_indices) / self.data_manager.total_rows * 100
-        print(f"已处理 {len(self.processed_indices)} 行，占总数的 {dataset_completion:.2f}%")
-        print("======================"*3)
-    
-    def run(self, max_rows: Optional[int] = None) -> None:
-        """
-        运行语义匹配实验。
-        
-        Args:
-            max_rows: 最大处理行数，用于测试，None表示处理所有行
-        """
-        print(f"开始运行语义匹配实验...")
-        start_time = time.time()
-        
-        # 获取未处理的数据块
-        processed_count = 0
-        chunk_count = 0
-        
-        # 如果是第一次运行，获取所有数据块
-        if not self.processed_indices:
-            for chunk_idx, (_, chunk) in enumerate(self.data_manager.get_chunks()):
-                chunk_count += 1
-                print(f"\n处理数据块 {chunk_idx}，包含 {len(chunk)} 行数据...")
-                
-                # 处理数据块
-                chunk_results = self.process_chunk(chunk_idx, chunk)
-                
-                # 更新处理计数
-                processed_count += chunk_results["processed_in_chunk"]
-                
-                # 显示处理进度
-                print(f"数据块 {chunk_idx} 处理完成: {chunk_results['chunk_completion']:.2f}% 完成")
-                print(f"整体进度: {chunk_results['dataset_completion']:.2f}% ({len(self.processed_indices)}/{self.data_manager.total_rows})")
-                
-                # 如果达到最大行数，停止处理
-                if max_rows is not None and processed_count >= max_rows:
-                    print(f"已达到指定的最大处理行数 {max_rows}，停止处理")
-                    break
-        else:
-            # 如果是断点续传，只获取未处理的数据块
-            unprocessed_chunks = self.data_manager.get_unprocessed_chunks(self.processed_indices)
-            print(f"断点续传: 已处理 {len(self.processed_indices)} 行，还有 {len(unprocessed_chunks)} 个数据块未处理完全")
-            
-            for chunk_idx, (_, chunk) in enumerate(unprocessed_chunks):
-                chunk_count += 1
-                print(f"\n处理未完成的数据块 {chunk_idx}/{len(unprocessed_chunks)}，包含 {len(chunk)} 行数据...")
-                
-                # 处理数据块
-                chunk_results = self.process_chunk(chunk_idx, chunk)
-                
-                # 更新处理计数
-                processed_count += chunk_results["processed_in_chunk"]
-                
-                # 显示处理进度
-                print(f"数据块 {chunk_idx} 处理完成: {chunk_results['chunk_completion']:.2f}% 完成")
-                print(f"整体进度: {chunk_results['dataset_completion']:.2f}% ({len(self.processed_indices)}/{self.data_manager.total_rows})")
-                
-                if chunk_results["processed_in_chunk"] > 0:
-                    print(f"本次处理了 {chunk_results['processed_in_chunk']} 行数据")
-                
-                # 如果达到最大行数，停止处理
-                if max_rows is not None and processed_count >= max_rows:
-                    print(f"已达到指定的最大处理行数 {max_rows}，停止处理")
-                    break
-        
-        # 保存最后的结果缓存
-        if self.results_cache:
-            print("\n保存最后的结果缓存...")
-            self.save_checkpoint(chunk_idx)
-        
-        # 清理资源
-        self.cleanup()
-        
-        end_time = time.time()
-        duration = end_time - start_time
-        
-        print(f"\n语义匹配实验完成!")
-        print(f"总处理行数: {len(self.processed_indices)}")
-        print(f"总耗时: {duration:.2f} 秒")
-        if len(self.processed_indices) > 0:
-            print(f"平均每行处理时间: {duration / len(self.processed_indices):.4f} 秒")
-        print(f"结果保存在: {self.data_manager.get_output_path()}")
-    
-    def cleanup(self):
-        """清理资源，释放模型内存"""
-        print("清理资源...")
-        # 释放模型资源
-        self._fasttext_model = None
-        self._bge_large_model = None
-        self._bge_m3_model = None
+        return model_runners
 
-def main():
-    """主函数，解析命令行参数并运行实验"""
-    parser = argparse.ArgumentParser(description="语义匹配实验运行器")
-    parser.add_argument("--data-path", type=str, default="data/dataset1.csv", help="数据文件路径")
-    parser.add_argument("--chunksize", type=int, default=8192, help="数据块大小")
-    parser.add_argument("--experiment-id", type=str, help="实验ID")
-    parser.add_argument("--checkpoint-interval", type=int, default=1024, help="检查点间隔行数")
-    parser.add_argument("--max-rows", type=int, default=None, help="最大处理行数，用于测试")
-    parser.add_argument("--batch-size", type=int, default=64, help="并行处理的批量大小")
-    parser.add_argument("--n-jobs", type=int, default=8, help="并行处理的作业数，-1表示使用所有可用CPU")
+    # --------------------------------------------------------------------------
+    # Methods below are now inherited from ExperimentRunner or are no longer needed
+    # --------------------------------------------------------------------------
+    # - __init__ is modified to call super()
+    # - _initialize_fasttext_model, _initialize_bge_large_model, _initialize_bge_m3_model 
+    #   logic moved into _init_model_runners
+    # - run_word2vec_matching, run_bge_large_matching, run_bge_m3_matching
+    #   functionality handled by SimilarityModelRunner.predict
+    # - process_row, process_batch, process_chunk, save_checkpoint, run, cleanup
+    #   are provided by the ExperimentRunner base class.
+    # - Model attributes (_fasttext_model, etc.) are now encapsulated within the runners.
+    # - data_manager, processed_indices, results_cache are handled by the base class.
+
+
+# Main execution block (optional, can be moved to a separate script)
+# -----------------------------------------------------------------
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run Semantic Matching Experiment")
+    
+    # Load configuration from config.yml
+    config_path = Path(__file__).parent / "config.yml"
+    config = load_config(config_path)
+    experiment_config = config.get('experiment_config', {})
+    
+    # Define arguments with defaults from config
+    parser.add_argument("--data_path", type=str, 
+                      default=experiment_config.get('data_path'), 
+                      help="Path to the input CSV data file.")
+    parser.add_argument("--chunksize", type=int, 
+                      default=experiment_config.get('chunksize', 10000), 
+                      help="Chunk size for reading data.")
+    parser.add_argument("--experiment_id", type=str, 
+                      default=experiment_config.get('experiment_id'), 
+                      help="Optional experiment ID.")
+    parser.add_argument("--checkpoint_interval", type=int, 
+                      default=experiment_config.get('checkpoint_interval', 1000), 
+                      help="Checkpoint save interval (rows).")
+    parser.add_argument("--batch_size", type=int, 
+                      default=experiment_config.get('batch_size', 32), 
+                      help="Batch size for parallel processing.")
+    parser.add_argument("--n_jobs", type=int, 
+                      default=experiment_config.get('n_jobs', 4), 
+                      help="Number of parallel jobs.")
+    parser.add_argument("--max_rows", type=int, 
+                      default=experiment_config.get('max_rows'), 
+                      help="Maximum number of rows to process (for testing).")
+    parser.add_argument("--fasttext_path", type=str, 
+                      default=experiment_config.get('fasttext_path', "/home/zfwj/workspace/new_code/fasttext_model/cc.zh.300.bin"), 
+                      help="Path to FastText model.")
+    parser.add_argument("--xinference_url", type=str, 
+                      default=experiment_config.get('xinference_url', "http://20.30.80.200:9997"), 
+                      help="XInference server URL.")
     
     args = parser.parse_args()
     
-    # 初始化运行器
+    # Create and run the experiment
     runner = SemanticMatchingRunner(
         data_path=args.data_path,
         chunksize=args.chunksize,
         experiment_id=args.experiment_id,
         checkpoint_interval=args.checkpoint_interval,
         batch_size=args.batch_size,
-        n_jobs=args.n_jobs
+        n_jobs=args.n_jobs,
+        fasttext_model_path=args.fasttext_path,
+        xinference_server_url=args.xinference_url
     )
     
-    # 运行实验
     runner.run(max_rows=args.max_rows)
-
-if __name__ == "__main__":
-    main()
+    runner.cleanup()

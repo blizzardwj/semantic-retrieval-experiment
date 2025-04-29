@@ -1,0 +1,22 @@
+# configuration file for pairwise classification experiment
+
+experiment_config:
+  # dataset path
+  data_path: "data/dataset1.csv"
+  # chunk size for reading data
+  chunksize: 10000
+  # define a unique ID for an experiment
+  experiment_id: ""
+  # interval for saving checkpoints
+  checkpoint_interval: 1000
+  # batch size for processing
+  batch_size: 32
+  # number of jobs for parallel processing
+  n_jobs: 4
+  # maximum number of rows to process (only for test)
+  max_rows: 10000
+  # path to fasttext model
+  fasttext_path: "/home/zfwj/workspace/new_code/fasttext_model/cc.zh.300.bin"
+  # xinference url
+  xinference_url: "http://20.30.80.200:9997"
+  
