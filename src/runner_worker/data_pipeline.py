@@ -13,9 +13,9 @@ class DataChunkProcessor:
     """
     
     def __init__(self, 
-        accumulator: ResultAccumulator, 
-        data_source: Optional[DataSource] = None,
+        data_source: DataSource,
         model_runner: Optional[ModelRunner] = None,
+        accumulator: Optional[ResultAccumulator] = None, 
         chunk_size: int = 1024
     ):
         """
@@ -25,10 +25,11 @@ class DataChunkProcessor:
             accumulator: An implementation of ResultAccumulator to store results
             data_source: Optional data source to read data from (if None, synthetic data will be generated)
             model_runner: Optional model runner to process data chunks
+            chunk_size: Size of each chunk to process
         """
-        self.accumulator = accumulator
         self.data_source = data_source
         self.model_runner = model_runner
+        self.accumulator = accumulator
         self.chunk_size = chunk_size
 
     # Set key columns of data source
@@ -100,7 +101,7 @@ class DataChunkProcessor:
         
         # Process each chunk
         for chunk_idx in range(num_chunks):
-            if not self.process_chunk(chunk_idx):
+            if not self.process_chunk(chunk_idx, self.chunk_size):
                 break  # Stop processing if there's no more data
             
             # Check if we've reached the save interval (if specified)

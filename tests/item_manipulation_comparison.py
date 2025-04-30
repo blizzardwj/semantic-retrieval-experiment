@@ -240,7 +240,15 @@ def method5(chunk_df, n_processes=None, chunksize=None):
 
 # Run comparison experiment
 def compare_methods(csv_file, chunk_size=1000, n_chunks=5):
-    """Compare the performance of different methods"""
+    """Compare the performance of different methods
+    
+    Args:
+        csv_file: Path to the CSV file to process
+        chunk_size: Size of one chunk
+        n_chunks: Number of chunks to process
+    Returns:
+        Dict containing the results of each method
+    """
     results = {
         "Method 1 (Dict conversion)": [],
         "Method 2 (DataFrame direct)": [],
@@ -331,12 +339,13 @@ def plot_results(results):
 
 
 if __name__ == "__main__":
+    from pathlib import Path
     # Set the random seed for reproducibility
     np.random.seed(42)
     
     # Generate sample data if needed
-    csv_file = "sample_data.csv"
-    if not os.path.exists(csv_file):
+    csv_file = Path(__file__).parent / "test_data/sample_data.csv"
+    if not csv_file.exists():
         csv_file = generate_sample_data(rows=10000, output_file=csv_file)
     
     # Run the comparison
